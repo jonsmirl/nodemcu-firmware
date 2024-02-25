@@ -155,7 +155,11 @@ void __attribute__((noreturn)) app_main(void)
     relay_default_loop_events,
     NULL);
 
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED
+  platform_usb_jtag_serial_start();
+#else
   platform_uart_start(CONFIG_ESP_CONSOLE_UART_NUM);
+#endif
   setvbuf(stdout, NULL, _IONBF, 0);
 
   nodemcu_init ();

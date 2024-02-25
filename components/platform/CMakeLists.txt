@@ -19,6 +19,7 @@ idf_component_register(
     "task"
     "u8g2"
     "ucg"
+    "console"
   PRIV_REQUIRES
     "bootloader_support"
     "esp_rom"

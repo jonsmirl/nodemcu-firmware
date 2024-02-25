@@ -12,7 +12,11 @@
 #include "rom/uart.h"
 #include "esp_log.h"
 #include "task/task.h"
+#include "linenoise/linenoise.h"
+#include "esp_console.h"
 #include "linput.h"
+
+#define PROMPT_STR CONFIG_IDF_TARGET
 
 int platform_init (void)
 {
@@ -93,7 +97,7 @@ void uart_event_task( task_param_t param, task_prio_t prio ) {
   uart_status_t *us = &uart_status[id];
   xSemaphoreGive(sem);
   if(post->type == PLATFORM_UART_EVENT_DATA) {
-    if (id == CONFIG_ESP_CONSOLE_UART_NUM && run_input) {
+    if (id == (unsigned int)CONFIG_ESP_CONSOLE_UART_NUM && run_input) {
       size_t i = 0;
       while (i < post->size)
       {
@@ -101,7 +105,7 @@ void uart_event_task( task_param_t param, task_prio_t prio ) {
         i += used;
       }
     }
-    if (uart_has_on_data_cb(id)) {
+    if ((id != (unsigned int)-1) && uart_has_on_data_cb(id)) {
       size_t i = 0;
       while (i < post->size)
       {
@@ -431,6 +435,86 @@ int platform_uart_set_wakeup_threshold(unsigned id, unsigned threshold)
 {
   esp_err_t err = uart_set_wakeup_threshold(id, threshold);
   return (err == ESP_OK) ? 0 : -1;
+}
+
+void task_usb_jtag_serial()
+{
+  uart_event_post_t* post = NULL;
+  size_t len;
+
+  while(true) {
+    char *b = linenoise("> ");
+
+    if (b == NULL)
+      continue;  /* no input */
+
+    /* Add the command to the history */
+    linenoiseHistoryAdd(b);
+
+    len = strlen(b);
+
+    post = (uart_event_post_t*)malloc(sizeof(uart_event_post_t));
+    if(post == NULL) {
+      ESP_LOGE(UART_TAG, "Can not alloc memory in task_usb_jtag_serial()");
+      // reboot here?
+      continue;
+    }
+    post->data = malloc(len + 2);
+    post->id = -1;
+    if(post->data == NULL) {
+      ESP_LOGE(UART_TAG, "Can not alloc memory in task_usb_jtag_serial()");
+      post->type = PLATFORM_UART_EVENT_OOM;
+    } else {
+      post->type = PLATFORM_UART_EVENT_DATA;
+      strncpy(post->data, b, len);
+      post->data[len] = '\n';
+      post->data[len + 1] = '\0';
+      post->size = len + 1;
+    }
+
+    linenoiseFree(b);
+    if (post != NULL) {
+      xSemaphoreTake(sem, portMAX_DELAY);
+      if (!task_post_medium(uart_event_task_id, (task_param_t)post))
+      {
+        ESP_LOGE(UART_TAG, "Task event overrun in task_usb_jtag_serial()");
+        xSemaphoreGive(sem);
+        free(post->data);
+        free(post);
+      }
+      post = NULL;
+    }
+  }
+}
+
+int platform_usb_jtag_serial_start()
+{
+  StackType_t* sjtag_stack = (StackType_t*)heap_caps_calloc(1, 4096, MALLOC_CAP_SPIRAM);
+  static StaticTask_t sjtag_task;
+
+  esp_console_repl_t *repl = NULL;
+  esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+
+  /* Prompt to be printed before each line.
+    * This can be customized, made dynamic, etc.
+    */
+  repl_config.prompt = PROMPT_STR ">";
+  repl_config.max_cmdline_length = 512;
+
+  esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl));
+
+  if(uart_event_task_id == 0)
+    uart_event_task_id = task_get_id( uart_event_task );
+
+  // 4 chosen as a number smaller than the number of nodemcu task slots
+  // available, to make it unlikely we encounter a task_post failing
+  if (sem == NULL)
+    sem = xSemaphoreCreateCounting(4, 4);
+
+  if(xTaskCreateStatic(task_usb_jtag_serial, "JTAG serial", 2048, NULL, ESP_TASK_MAIN_PRIO + 1, sjtag_stack, &sjtag_task) != pdPASS)
+    return -1;
+  return 0;
 }
 
 // *****************************************************************************

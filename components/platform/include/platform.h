@@ -118,6 +118,7 @@ void platform_uart_stop( unsigned id );
 int platform_uart_get_config(unsigned id, uint32_t *baudp, uint32_t *databitsp, uint32_t *parityp, uint32_t *stopbitsp);
 int platform_uart_set_wakeup_threshold(unsigned id, unsigned threshold);
 
+int platform_usb_jtag_serial_start();
 
 // *****************************************************************************
 // Sigma-Delta subsection
